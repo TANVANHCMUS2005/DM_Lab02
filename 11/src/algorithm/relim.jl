@@ -1,7 +1,12 @@
 # Bắt đầu file relim.jl - Bao gồm cả thư viện và phần chạy chính để thỏa mãn đúng cấu trúc thư mục
 
-include("../structures.jl")
-include("../utils.jl")
+# Guard: chỉ include nếu module chưa tồn tại (tránh xung đột khi test include nhiều file)
+if !isdefined(Main, :Structures)
+    include(joinpath(@__DIR__, "..", "structures.jl"))
+end
+if !isdefined(Main, :Utils)
+    include(joinpath(@__DIR__, "..", "utils.jl"))
+end
 
 module Algorithm
 
