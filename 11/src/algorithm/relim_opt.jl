@@ -1,43 +1,36 @@
-# relim_opt_v3.jl - Comprehensive Level 3+ Optimization
-
-if !isdefined(Main, :Structures)
-    include(joinpath(@__DIR__, "..", "structures.jl"))
-end
-if !isdefined(Main, :Utils)
-    include(joinpath(@__DIR__, "..", "utils.jl"))
-end
-
 module AlgorithmOptV3
-
-using ..Structures
-using ..Utils
 
 export relim_optimized_mine
 
-"""
-    relim_optimized_mine(transactions, minsup)
+struct TransactionSuffix
+    tx_idx::Int
+    pos::Int
+end
 
-A fully optimized implementation of the Recursive Elimination algorithm.
-Addressses the 'Dict' indexing overhead and integrates algorithmic pruning.
-"""
+# Không chứa Abstract Type, giữ Bool để kiểm tra trạng thái thay vì dùng `nothing`
+mutable struct ItemList
+    support::Int
+    suffixes::Vector{TransactionSuffix}
+    active::Bool 
+end
+
+# Hàm khởi tạo mặc định cho Object Pool
+ItemList() = ItemList(0, TransactionSuffix[], false)
+
+
 function relim_optimized_mine(transactions::Vector{Vector{Int}}, minsup::Int)
-    frequent_itemsets = Vector{Tuple{Vector{Int}, Int}}()
-    
-    # --- PHASE 1: PREPROCESSING ---
-    # Determine item frequencies and filter infrequent items
+    # --- BƯỚC 1: TIỀN XỬ LÝ (PREPROCESSING) ---
     item_counts = Dict{Int, Int}()
-    sizehint!(item_counts, 2000) # Pre-allocation [35]
+    sizehint!(item_counts, 2000)
     for t in transactions
         for item in t
             item_counts[item] = get(item_counts, item, 0) + 1
         end
     end
     
-    # Valid items sorted ASCENDING by support (Critical for RElim efficiency) 
     valid_items = [item for (item, count) in item_counts if count >= minsup]
     sort!(valid_items, by = x -> (item_counts[x], x))
     
-    # Mapping for rank-based indexing 
     item_to_rank = Dict{Int, Int}()
     rank_to_item = Vector{Int}(undef, length(valid_items))
     for (idx, item) in enumerate(valid_items)
@@ -45,9 +38,8 @@ function relim_optimized_mine(transactions::Vector{Vector{Int}}, minsup::Int)
         rank_to_item[idx] = item
     end
     
-    # Database conversion with rank-swap and lexicographical sort
-    processed_txs = Vector{Vector{Int}}()
-    sizehint!(processed_txs, length(transactions))
+    master_db = Vector{Vector{Int}}()
+    sizehint!(master_db, length(transactions))
     for t in transactions
         filtered = Int[]
         sizehint!(filtered, length(t))
@@ -58,113 +50,159 @@ function relim_optimized_mine(transactions::Vector{Vector{Int}}, minsup::Int)
         end
         if !isempty(filtered)
             sort!(filtered)
-            push!(processed_txs, filtered)
+            push!(master_db, filtered)
         end
     end
     
-    # --- PHASE 2: ROOT INITIALIZATION ---
     N = length(valid_items)
-    # Optimized Vector storage with isbits Union optimization 
-    root_lists = Vector{Union{Nothing, ItemList}}(nothing, N + 1)
+    num_tx = length(master_db)
+    frequent_itemsets = Vector{Tuple{Vector{Int}, Int}}()
+
+    if N == 0
+        return frequent_itemsets
+    end
     
-    for t in processed_txs
-        head_rank = t[1]
-        if root_lists[head_rank] === nothing
-            root_lists[head_rank] = ItemList(head_rank)
-        end
-        root_lists[head_rank].support += 1
-        if length(t) > 1
-            push!(root_lists[head_rank].transactions, view(t, 2:length(t)))
+    # --- BƯỚC 2: KHỞI TẠO OBJECT POOLS (100% Không cấp phát RAM sau bước này) ---
+    # Khởi tạo ma trận bộ đệm cho mọi độ sâu đệ quy
+    buffer_cache = [[ItemList() for _ in 1:(N + 1)] for _ in 1:(N + 1)]
+    
+    # Cấp phát trước dung lượng (capacity) cho các mảng suffixes để push! đạt O(1)
+    # Dự đoán kích thước an toàn để tránh re-allocation
+    safe_capacity = min(100_000, num_tx) 
+    for d in 1:(N + 1)
+        for i in 1:(N + 1)
+            sizehint!(buffer_cache[d][i].suffixes, safe_capacity)
         end
     end
     
-    # --- PHASE 3: RECURSIVE MINING ---
-    # Using a pre-allocated prefix buffer to avoid recursive copy() [41, 57]
-    prefix_buffer = Int[]
-    sizehint!(prefix_buffer, 25) 
+    local_counters_pool = [zeros(Int, N + 1) for _ in 1:(N + 1)]
     
-    _relim_recursive_pep!(root_lists, prefix_buffer, minsup, frequent_itemsets, rank_to_item, 1, N)
+    # --- BƯỚC 3: GÁN DỮ LIỆU ROOT ---
+    root_lists = buffer_cache[1]
+    for (i, t) in enumerate(master_db)
+        head = t[1]
+        root_lists[head].active = true
+        root_lists[head].support += 1
+        if length(t) > 1
+            push!(root_lists[head].suffixes, TransactionSuffix(i, 2))
+        end
+    end
+    
+    prefix_buffer = Int[]
+    sizehint!(prefix_buffer, N)
+    
+    # Kích hoạt lõi đệ quy
+    _relim_recursive_ultimate!(
+        root_lists, prefix_buffer, minsup, frequent_itemsets, rank_to_item, 
+        1, N, master_db, buffer_cache, local_counters_pool, 2
+    )
     
     return frequent_itemsets
 end
 
-"""
-    _relim_recursive_pep!(...)
-
-Internal recursive kernel with Perfect Extension Pruning.
-"""
-function _relim_recursive_pep!(lists::Vector{Union{Nothing, ItemList}}, 
-                              prefix::Vector{Int}, 
-                              minsup::Int, 
-                              frequent_itemsets::Vector{Tuple{Vector{Int}, Int}}, 
-                              rank_to_item::Vector{Int}, 
-                              start_idx::Int, 
-                              max_idx::Int)
-    
+function _relim_recursive_ultimate!(
+    lists::Vector{ItemList}, 
+    prefix::Vector{Int}, 
+    minsup::Int, 
+    frequent_itemsets::Vector{Tuple{Vector{Int}, Int}}, 
+    rank_to_item::Vector{Int}, 
+    start_idx::Int, 
+    max_idx::Int,
+    master_db::Vector{Vector{Int}},
+    buffer_cache::Vector{Vector{ItemList}},
+    local_counters_pool::Vector{Vector{Int}},
+    depth::Int
+)
     for i in start_idx:max_idx
         current_list = lists[i]
         
-        # If branch is empty or infrequent, reassign and continue 
-        if current_list === nothing || current_list.support < minsup
-            if current_list !== nothing
-                for t in current_list.transactions
-                    if !isempty(t)
-                        head = t[1]
-                        if lists[head] === nothing; lists[head] = ItemList(head); end
-                        lists[head].support += 1
-                        if length(t) > 1
-                            push!(lists[head].transactions, view(t, 2:length(t)))
-                        end
-                    end
+        # Bỏ qua nếu node không có dữ liệu
+        if !current_list.active
+            continue
+        end
+        
+        # Nhánh rác không đủ minsup: Bàn giao hậu tố cho anh em ngang hàng (Siblings)
+        if current_list.support < minsup
+            for suf in current_list.suffixes
+                t = master_db[suf.tx_idx]
+                if suf.pos <= length(t)
+                    head = t[suf.pos]
+                    lists[head].active = true
+                    lists[head].support += 1
+                    push!(lists[head].suffixes, TransactionSuffix(suf.tx_idx, suf.pos + 1))
                 end
-                lists[i] = nothing # Efficient memory release 
             end
+            # Dọn dẹp Node hiện tại cực nhanh bằng empty!
+            current_list.active = false
+            empty!(current_list.suffixes) 
             continue
         end
 
         support = current_list.support
         original_item = rank_to_item[i]
         
-        # Update results using prefix buffer management 
         push!(prefix, original_item)
         push!(frequent_itemsets, (copy(prefix), support))
         
-        # --- PERFECT EXTENSION PRUNING (PEP) LOGIC ---
-        # Identification step: Find items that appear in 100% of local transactions
-        # This implementation uses a simplified heuristic: checking the immediate heads of suffixes.
-        # True PEP would scan the entire local sub-database.
+        # --- LOCAL SUPPORT PRUNING ---
+        local_counters = local_counters_pool[depth]
+        fill!(local_counters, 0)
+        for suf in current_list.suffixes
+            t = master_db[suf.tx_idx]
+            for p in suf.pos:length(t)
+                local_counters[t[p]] += 1
+            end
+        end
         
-        var_next_lists = Vector{Union{Nothing, ItemList}}(nothing, max_idx + 1)
+        # --- DỌN DẸP BUFFER CHO ĐỆ QUY CON (O(1) memory) ---
+        var_next_lists = buffer_cache[depth]
+        for idx in 1:max_idx
+            var_next_lists[idx].support = 0
+            var_next_lists[idx].active = false
+            empty!(var_next_lists[idx].suffixes) # Xóa ảo, giữ capacity RAM
+        end
         
-        for t in current_list.transactions
-            if !isempty(t)
-                head = t[1]
+        # --- QUY TRÌNH TÁCH NHÁNH (SPLIT) CỦA RELIM ---
+        for suf in current_list.suffixes
+            t = master_db[suf.tx_idx]
+            if suf.pos <= length(t)
                 
-                # Sibling reassignment (Current recursion level)
-                if lists[head] === nothing; lists[head] = ItemList(head); end
+                # 1. Chuyển hậu tố cho anh em (Sibling Reassignment)
+                head = t[suf.pos]
+                lists[head].active = true
                 lists[head].support += 1
-                if length(t) > 1
-                    push!(lists[head].transactions, view(t, 2:length(t)))
+                push!(lists[head].suffixes, TransactionSuffix(suf.tx_idx, suf.pos + 1))
+                
+                # 2. Chiếu dữ liệu xuống con (Child Projection) + Cắt tỉa (Pruning)
+                pos_child = suf.pos
+                while pos_child <= length(t) && local_counters[t[pos_child]] < minsup
+                    pos_child += 1
                 end
                 
-                # Child projection (Next recursion level)
-                if var_next_lists[head] === nothing; var_next_lists[head] = ItemList(head); end
-                var_next_lists[head].support += 1
-                if length(t) > 1
-                    push!(var_next_lists[head].transactions, view(t, 2:length(t)))
+                if pos_child <= length(t)
+                    child_head = t[pos_child]
+                    var_next_lists[child_head].active = true
+                    var_next_lists[child_head].support += 1
+                    push!(var_next_lists[child_head].suffixes, TransactionSuffix(suf.tx_idx, pos_child + 1))
                 end
             end
         end
         
-        # Projective recursion
-        _relim_recursive_pep!(var_next_lists, prefix, minsup, frequent_itemsets, rank_to_item, i + 1, max_idx)
+        # --- ĐỆ QUY ---
+        _relim_recursive_ultimate!(
+            var_next_lists, prefix, minsup, frequent_itemsets, rank_to_item, 
+            i + 1, max_idx, master_db, buffer_cache, local_counters_pool, depth + 1
+        )
         
-        # Backtrack prefix buffer 
         pop!(prefix)
         
-        # Node clean-up
-        lists[i] = nothing
+        # Dọn dẹp Node sau khi xong đệ quy
+        current_list.active = false
+        empty!(current_list.suffixes)
     end
 end
 
 end # module AlgorithmOptV3
+
+# Backward-compatible alias nếu có script cũ import tên module mới hơn.
+const AlgorithmOptFinal = AlgorithmOptV3

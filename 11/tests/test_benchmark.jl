@@ -10,7 +10,7 @@ include(joinpath(@__DIR__, "..", "src", "algorithm", "relim.jl"))
 include(joinpath(@__DIR__, "..", "src", "algorithm", "relim_opt.jl"))
 
 using .Algorithm: relim_mine
-using .AlgorithmOptV3: relim_optimized_mine as relim_opt_mine
+using .AlgorithmOptV4: relim_optimized_mine as relim_opt_mine
 using .Utils: read_spmf_file
 
 """
