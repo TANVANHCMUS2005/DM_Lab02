@@ -1,130 +1,80 @@
 # tests/test_correctness.jl
 # =============================================================================
-# TV3 - Level 2: Kiểm thử tự động trên ít nhất 5 CSDL khác nhau
+# TV3 - Level 2: Kiểm thử tự động tính đúng đắn (Correctness)
+# Test trên 6 CSDL khác nhau (bao gồm CSDL của TV1: data/toy/demo.txt)
 # Chạy: julia --project=. tests/test_correctness.jl  (từ thư mục 11/)
 # =============================================================================
 
 using Test
 
-# Include thuật toán cơ bản (sẽ tự include structures.jl & utils.jl nhờ guard bên trong)
 include(joinpath(@__DIR__, "..", "src", "algorithm", "relim.jl"))
-# Include thuật toán tối ưu (guard isdefined ngăn load lại structures/utils)
 include(joinpath(@__DIR__, "..", "src", "algorithm", "relim_opt.jl"))
 
 using .Algorithm: relim_mine
-using .AlgorithmOptV3: relim_optimized_mine as relim_opt_mine
+using .AlgorithmOptV3: relim_optimized_mine
+using .Utils: read_spmf_file
 
-"""
-So sánh kết quả trả về với bộ expected. Sort cả 2 trước khi so.
-"""
-function compare_outputs(actual::Vector{Tuple{Vector{Int}, Int}}, expected::Vector{Tuple{Vector{Int}, Int}})
-    actual_sorted  = sort([(sort(is), s) for (is, s) in actual])
-    expected_sorted = sort([(sort(is), s) for (is, s) in expected])
-    @test actual_sorted == expected_sorted
+const relim_opt = relim_optimized_mine
+
+function compare_outputs(actual::Vector{Tuple{Vector{Int},Int}}, expected::Vector{Tuple{Vector{Int},Int}})
+    a = sort([(sort(is), s) for (is, s) in actual])
+    e = sort([(sort(is), s) for (is, s) in expected])
+    @test a == e
 end
 
-# =============================================================================
-@testset "Relim Correctness Tests (5 Datasets)" begin
+function test_both(txs::Vector{Vector{Int}}, ms::Int, exp::Vector{Tuple{Vector{Int},Int}})
+    @testset "Basic"     begin compare_outputs(relim_mine(txs, ms), exp) end
+    @testset "Optimized" begin compare_outputs(relim_opt(txs, ms), exp) end
+end
 
-    # ─────────────────────────────────────────────────────────
-    @testset "Dataset 1: Toy demo.txt (minsup=2)" begin
-        transactions = [
-            [1, 2, 3],
-            [1, 2],
-            [1, 3],
-            [2, 3],
-            [1, 2, 3]
-        ]
-        expected = [
-            ([1], 4),
-            ([2], 4),
-            ([3], 4),
-            ([1, 2], 3),
-            ([1, 3], 3),
-            ([2, 3], 3),
-            ([1, 2, 3], 2)
-        ]
+function test_cross(txs::Vector{Vector{Int}}, ms::Int; n::Union{Int,Nothing}=nothing)
+    rb = relim_mine(txs, ms); ro = relim_opt(txs, ms)
+    sb = sort([(sort(is),s) for (is,s) in rb])
+    so = sort([(sort(is),s) for (is,s) in ro])
+    @test sb == so
+    if n !== nothing; @test length(rb)==n; @test length(ro)==n; end
+end
 
-        @testset "Basic" begin
-            result = relim_mine(transactions, 2)
-            compare_outputs(result, expected)
-        end
-        @testset "Optimized" begin
-            result = relim_opt_mine(transactions, 2)
-            compare_outputs(result, expected)
-        end
+@testset "Relim Correctness — 6 Datasets" begin
+
+    @testset "DS1: CSDL TV1 — demo.txt (minsup=2)" begin
+        path = joinpath(@__DIR__,"..","data","toy","demo.txt")
+        @test isfile(path)
+        txs = read_spmf_file(path)
+        @test length(txs) == 5
+        exp = [([1],4),([2],4),([3],4),([1,2],3),([1,3],3),([2,3],3),([1,2,3],2)]
+        test_both(txs, 2, exp)
     end
 
-    # ─────────────────────────────────────────────────────────
-    @testset "Dataset 2: Tập thưa - Các cặp rời nhau (minsup=2)" begin
-        transactions = [
-            [1, 2],
-            [3, 4],
-            [5, 6],
-            [1, 2],
-            [3, 4]
-        ]
-        expected = [
-            ([1], 2), ([2], 2), ([3], 2), ([4], 2),
-            ([1, 2], 2), ([3, 4], 2)
-        ]
-        @testset "Basic" begin compare_outputs(relim_mine(transactions, 2), expected) end
-        @testset "Optimized" begin compare_outputs(relim_opt_mine(transactions, 2), expected) end
+    @testset "DS2: Tập thưa — cặp rời (minsup=2)" begin
+        txs = [[1,2],[3,4],[5,6],[1,2],[3,4]]
+        exp = [([1],2),([2],2),([3],2),([4],2),([1,2],2),([3,4],2)]
+        test_both(txs, 2, exp)
     end
 
-    # ─────────────────────────────────────────────────────────
-    @testset "Dataset 3: Single Path - Mọi giao dịch giống nhau (minsup=2)" begin
-        transactions = [
-            [1, 2, 3, 4, 5],
-            [1, 2, 3, 4, 5],
-            [1, 2, 3, 4, 5]
-        ]
-        # Mọi tập con không rỗng đều có support = 3. Tổng cộng 2^5 - 1 = 31 itemsets.
-        result_basic = relim_mine(transactions, 2)
-        result_opt   = relim_opt_mine(transactions, 2)
-
-        @test length(result_basic) == 31
-        @test length(result_opt) == 31
-
-        # So sánh chéo Basic vs Opt
-        basic_sorted = sort([(sort(is), s) for (is, s) in result_basic])
-        opt_sorted   = sort([(sort(is), s) for (is, s) in result_opt])
-        @test basic_sorted == opt_sorted
+    @testset "DS3: Single Path (minsup=2)" begin
+        txs = [[1,2,3,4,5],[1,2,3,4,5],[1,2,3,4,5]]
+        test_cross(txs, 2; n=31)
     end
 
-    # ─────────────────────────────────────────────────────────
-    @testset "Dataset 4: Minsup quá cao - Không có FI nào (minsup=4)" begin
-        transactions = [
-            [1, 2, 3],
-            [1, 2, 3],
-            [1, 2]
-        ]
-        expected = Vector{Tuple{Vector{Int}, Int}}()
-        @testset "Basic" begin compare_outputs(relim_mine(transactions, 4), expected) end
-        @testset "Optimized" begin compare_outputs(relim_opt_mine(transactions, 4), expected) end
+    @testset "DS4: Minsup quá cao — rỗng (minsup=4)" begin
+        txs = [[1,2,3],[1,2,3],[1,2]]
+        test_both(txs, 4, Vector{Tuple{Vector{Int},Int}}())
     end
 
-    # ─────────────────────────────────────────────────────────
-    @testset "Dataset 5: CSDL chồng chéo phức tạp (minsup=3)" begin
-        transactions = [
-            [1, 2, 4, 5],
-            [2, 3, 5],
-            [1, 2, 4, 5],
-            [1, 2, 3, 5],
-            [1, 2, 4, 5],
-            [2, 3, 4]
-        ]
-        expected = [
-            ([1], 4), ([2], 6), ([3], 3), ([4], 4), ([5], 5),
-            ([1, 2], 4), ([1, 4], 3), ([1, 5], 4),
-            ([2, 3], 3), ([2, 4], 4), ([2, 5], 5), ([4, 5], 3),
-            ([1, 2, 4], 3), ([1, 2, 5], 4), ([1, 4, 5], 3), ([2, 4, 5], 3),
-            ([1, 2, 4, 5], 3)
-        ]
-        @testset "Basic" begin compare_outputs(relim_mine(transactions, 3), expected) end
-        @testset "Optimized" begin compare_outputs(relim_opt_mine(transactions, 3), expected) end
+    @testset "DS5: Chồng chéo phức tạp (minsup=3)" begin
+        txs = [[1,2,4,5],[2,3,5],[1,2,4,5],[1,2,3,5],[1,2,4,5],[2,3,4]]
+        exp = [([1],4),([2],6),([3],3),([4],4),([5],5),
+               ([1,2],4),([1,4],3),([1,5],4),([2,3],3),([2,4],4),([2,5],5),([4,5],3),
+               ([1,2,4],3),([1,2,5],4),([1,4,5],3),([2,4,5],3),([1,2,4,5],3)]
+        test_both(txs, 3, exp)
     end
 
-end # @testset
+    @testset "DS6: Mỗi giao dịch 1 item (minsup=2)" begin
+        txs = [[10],[20],[10],[30],[20],[10]]
+        exp = [([10],3),([20],2)]
+        test_both(txs, 2, exp)
+    end
+end
 
-println("\n✅ Tất cả bài Test đã được thực thi thành công!")
+println("\n✅ Tất cả bài Test đã PASS!")

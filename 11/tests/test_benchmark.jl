@@ -1,135 +1,295 @@
 # tests/test_benchmark.jl
-# =============================================================================
-# TV3 - Level 3: Benchmark thời gian chạy & bộ nhớ cho cả 2 phiên bản
-# Chạy: julia --project=. tests/test_benchmark.jl  (từ thư mục 11/)
-# Output: data/benchmark_results.csv
-# =============================================================================
-
-# Include thuật toán (guard isdefined bên trong sẽ tránh load trùng)
 include(joinpath(@__DIR__, "..", "src", "algorithm", "relim.jl"))
 include(joinpath(@__DIR__, "..", "src", "algorithm", "relim_opt.jl"))
 
 using .Algorithm: relim_mine
-using .AlgorithmOptV4: relim_optimized_mine as relim_opt_mine
+using .AlgorithmOptV3: relim_optimized_mine
 using .Utils: read_spmf_file
 
-"""
-    generate_mock_dataset(filepath, num_transactions, num_items, avg_length)
+const relim_opt = relim_optimized_mine
 
-Sinh tập dữ liệu giả lập. Dùng `unique(sort!(...))` để mỗi giao dịch không chứa item trùng.
+# ─── Thư mục output ─────────────────────────────────────────────────────────
+const DATA_DIR      = joinpath(@__DIR__, "..", "data")
+const BENCHMARK_DIR = joinpath(DATA_DIR, "benchmark")
+
+
+DATASETS = [
+    ("chess.txt", "Chess", [0.80, 0.75, 0.70, 0.65, 0.60]),
+    ("mushroom.txt", "Mushroom", [0.30, 0.25, 0.20, 0.15, 0.10, 0.05]),
+    ("retail.txt", "Retail", [0.10, 0.07, 0.05, 0.03, 0.02]),
+    ("accidents.txt", "Accidents", [0.90, 0.85, 0.80, 0.75, 0.70, 0.65]),
+    ("T10I4D100K.txt", "T10I4D100K", [0.10, 0.07, 0.05, 0.03, 0.02]),
+]
+# Minsup dùng cho kiểm tra correctness (a) — chọn giá trị giữa của mỗi dataset
+const CORRECTNESS_MINSUP = Dict(
+    "Chess"      => 0.75,
+    "Mushroom"   => 0.15,
+    "Retail"     => 0.03,   
+    "Accidents"  => 0.80,
+    "T10I4D100K" => 0.03,  
+)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HÀM ĐO LƯỜNG
+# ═════════════════════════════════════════════════════════════════════════════
+
 """
-function generate_mock_dataset(filepath::String, num_transactions::Int, num_items::Int, avg_length::Int)
-    println("  ⚙ Đang tạo dataset giả lập: ", basename(filepath))
-    open(filepath, "w") do f
-        for _ in 1:num_transactions
-            len = max(1, rand(max(1, avg_length-2):avg_length+2))
-            items = sort!(unique(rand(1:num_items, len)))
-            println(f, join(items, " "))
-        end
-    end
+    measure(f) → (result, time_s, mem_mb)
+
+Đo thời gian chạy và bộ nhớ cấp phát (allocated bytes) của hàm f().
+`@timed.bytes` = tổng bytes cấp phát qua GC → xấp xỉ trên của Peak Memory.
+"""
+function measure(f)
+    GC.gc()
+    stats = @timed f()
+    return (stats.value, stats.time, round(stats.bytes / 1024^2, digits=2))
 end
 
+# ═════════════════════════════════════════════════════════════════════════════
+# PHẦN 0: CORRECTNESS — So sánh Basic vs Optimized trên 5 dataset chuẩn
+# Yêu cầu (a): Báo cáo (i) tỉ lệ itemset khớp hoàn toàn;
+#               (ii) nếu sai lệch → phân tích nguyên nhân.
+# Output: correctness_results.csv
+# ═════════════════════════════════════════════════════════════════════════════
+
 """
-    ensure_datasets(dir)
+    cross_validate(basic_result, opt_result) → (match_count, total, match_rate)
 
-Đảm bảo các file benchmark tồn tại (tạo mock nếu chưa có).
-Minsup được chọn phù hợp đặc tính dense/sparse:
-- Dense (nhiều item/giao dịch, ít item tổng): minsup RẤT CAO (>80%)
-- Sparse (ít item/giao dịch, nhiều item tổng): minsup thấp (1-15%)
+So sánh từng itemset+support giữa Basic và Optimized.
+Trả về: số FI khớp hoàn toàn, tổng FI (union), tỉ lệ khớp (%).
 """
-function ensure_datasets(dir::String)
-    mkpath(dir)
-
-    # QUAN TRỌNG: Với dataset dense mock, cần:
-    #   - Giảm n_trans nhỏ hơn bản gốc  
-    #   - Tăng tỉ lệ num_items / avg_len để giảm overlap
-    #   - Dùng minsup rất cao
-    configs = [
-        # Dense datasets → kích thước NHỎ, minsup CAO
-        # Chess gốc: 3196 trans, 75 items, avg 37. Mock: 500 trans, 200 items, avg 12 → bớt dense hơn
-        ("chess_mock.txt",     "Chess (mock)",     500,  200,  12, [0.50, 0.40, 0.30, 0.20, 0.10]),
-        # Mushroom gốc: 8124 trans, 119 items, avg 23. Mock tương tự
-        ("mushroom_mock.txt",  "Mushroom (mock)",  1000, 200,  15, [0.50, 0.40, 0.30, 0.20, 0.10]),
-        # Sparse datasets → kích thước vừa, minsup thấp 
-        ("retail_mock.txt",    "Retail (mock)",    5000, 500,  8,  [0.10, 0.05, 0.03, 0.02, 0.01]),
-        ("t10i4d100k_mock.txt","T10I4 (mock)",     5000, 870,  10, [0.10, 0.05, 0.03, 0.02, 0.01]),
-    ]
-
-    result = Tuple{String, String, Vector{Float64}}[]
-    for (fname, dname, n_trans, n_items, avg_len, minsups) in configs
-        fpath = joinpath(dir, fname)
-        if !isfile(fpath)
-            generate_mock_dataset(fpath, n_trans, n_items, avg_len)
-        end
-        push!(result, (fpath, dname, minsups))
-    end
-    return result
+function cross_validate(rb::Vector{Tuple{Vector{Int},Int}},
+                        ro::Vector{Tuple{Vector{Int},Int}})
+    sb = Set([(sort(is), s) for (is, s) in rb])
+    so = Set([(sort(is), s) for (is, s) in ro])
+    matched   = length(intersect(sb, so))
+    total     = length(union(sb, so))
+    rate      = total == 0 ? 100.0 : round(matched / total * 100, digits=2)
+    only_basic = length(setdiff(sb, so))
+    only_opt   = length(setdiff(so, sb))
+    return (matched, total, rate, only_basic, only_opt)
 end
 
-"""
-    run_benchmark()
+function run_correctness()
+    csv_path = joinpath(DATA_DIR, "correctness_results.csv")
+    println("\n" * "═"^70)
+    println("  PHẦN 0: CORRECTNESS — Basic vs Optimized (5 datasets)")
+    println("  Output: ", csv_path)
+    println("═"^70)
 
-Chạy benchmark so sánh Relim Basic vs Relim Opt.
-Xuất kết quả ra file CSV để TV4 vẽ biểu đồ.
-"""
-function run_benchmark()
-    dataset_dir = joinpath(@__DIR__, "..", "data", "benchmark")
-    datasets = ensure_datasets(dataset_dir)
+    open(csv_path, "w") do f
+        println(f, "Dataset,Minsup_Pct,Minsup_Count,Num_Trans,Num_FI_Basic,Num_FI_Opt,Matched,Total_Union,Match_Rate_Pct,Only_Basic,Only_Opt")
 
-    output_csv = joinpath(@__DIR__, "..", "data", "benchmark_results.csv")
-    println("\n>>> Đang chạy Benchmark...")
-    println(">>> Kết quả sẽ lưu vào: ", output_csv)
+        for (fname, dname, _) in DATASETS
+            fpath = joinpath(BENCHMARK_DIR, fname)
+            if !isfile(fpath)
+                println("  ⚠ SKIP: $(fname)"); continue
+            end
 
-    open(output_csv, "w") do f
-        # Header CSV
-        println(f, "Dataset,Minsup_Pct,Minsup_Count,Num_Trans,Num_FI_Basic,Num_FI_Opt,Time_Basic_s,Mem_Basic_MB,Time_Opt_s,Mem_Opt_MB")
+            m = get(CORRECTNESS_MINSUP, dname, 0.50)
+            transactions = read_spmf_file(fpath)
+            n = length(transactions)
+            mc = max(1, Int(ceil(m * n)))
+            pct = round(m * 100, digits=2)
 
-        for (path, dname, minsup_list) in datasets
-            println("\n═══════════════════════════════════════")
-            println("  Dataset: ", dname, "  (", basename(path), ")")
-            println("═══════════════════════════════════════")
+            print("  $(dname) — minsup=$(pct)% ($(mc)/$(n)) ... ")
 
-            transactions = read_spmf_file(path)
-            n_trans = length(transactions)
-            println("  Số giao dịch: ", n_trans)
+            try
+                rb = relim_mine(transactions, mc)
+                ro = relim_opt(transactions, mc)
+                nb = length(rb); no = length(ro)
+                (matched, total, rate, ob, oo) = cross_validate(rb, ro)
 
-            # Warm-up JIT
-            warmup_txs = transactions[1:min(10, n_trans)]
-            relim_mine(warmup_txs, 1)
-            relim_opt_mine(warmup_txs, 1)
-
-            for m in minsup_list
-                min_count = max(1, Int(ceil(m * n_trans)))
-
-                print("  minsup=$(round(m*100, digits=1))% ($(min_count)/$(n_trans)) ... ")
-
-                # --- Basic ---
-                GC.gc()
-                stats_b = @timed relim_mine(transactions, min_count)
-                time_b = round(stats_b.time, digits=4)
-                mem_b  = round(stats_b.bytes / 1024^2, digits=2)
-                n_fi_b = length(stats_b.value)
-
-                # --- Optimized ---
-                GC.gc()
-                stats_o = @timed relim_opt_mine(transactions, min_count)
-                time_o = round(stats_o.time, digits=4)
-                mem_o  = round(stats_o.bytes / 1024^2, digits=2)
-                n_fi_o = length(stats_o.value)
-
-                println("Basic: $(time_b)s/$(mem_b)MB ($(n_fi_b) FI) | Opt: $(time_o)s/$(mem_o)MB ($(n_fi_o) FI)")
-
-                # Ghi CSV
-                println(f, "$(dname),$(round(m*100, digits=1)),$(min_count),$(n_trans),$(n_fi_b),$(n_fi_o),$(time_b),$(mem_b),$(time_o),$(mem_o)")
+                if rate == 100.0
+                    println("✅ PASS — $(nb) FI, khớp 100%")
+                else
+                    println("⚠ MISMATCH — Basic=$(nb), Opt=$(no), khớp $(rate)% (Basic-only=$(ob), Opt-only=$(oo))")
+                end
+                println(f, "$(dname),$(pct),$(mc),$(n),$(nb),$(no),$(matched),$(total),$(rate),$(ob),$(oo)")
+            catch e
+                println("ERROR: ", e)
+                println(f, "$(dname),$(pct),$(mc),$(n),ERROR,ERROR,ERROR,ERROR,ERROR,ERROR,ERROR")
             end
         end
     end
-
-    println("\n✅ Hoàn tất Benchmark!")
-    println("   File CSV: ", output_csv)
+    println("\n✅ Phần 0 hoàn tất → $(csv_path)")
+    println("  ℹ Để so sánh với SPMF: chạy SPMF cùng minsup, đối chiếu Num_FI.")
 end
 
-# Chạy khi gọi trực tiếp file
+# ═════════════════════════════════════════════════════════════════════════════
+# PHẦN 1: BENCHMARK CHÍNH — Thời gian + Bộ nhớ + Số FI theo minsup
+# Output: benchmark_results.csv
+# ═════════════════════════════════════════════════════════════════════════════
+
+function run_main_benchmark()
+    csv_path = joinpath(DATA_DIR, "benchmark_results.csv")
+    println("\n" * "═"^70)
+    println("  PHẦN 1: BENCHMARK CHÍNH (5 datasets × 5-6 minsup)")
+    println("  Output: ", csv_path)
+    println("═"^70)
+
+    open(csv_path, "w") do f
+        println(f, "Dataset,Minsup_Pct,Minsup_Count,Num_Trans,Num_FI_Basic,Num_FI_Opt,Time_Basic_s,Mem_Basic_MB,Time_Opt_s,Mem_Opt_MB")
+
+        for (fname, dname, minsups) in DATASETS
+            fpath = joinpath(BENCHMARK_DIR, fname)
+            if !isfile(fpath)
+                println("  ⚠ SKIP: Không tìm thấy file $(fname)")
+                continue
+            end
+
+            println("\n──── Dataset: $(dname) ($(fname)) ────")
+            transactions = read_spmf_file(fpath)
+            n = length(transactions)
+            println("  Số giao dịch: $(n)")
+
+            # JIT Warm-up (chạy trên tập nhỏ để biên dịch lần đầu)
+            warmup = transactions[1:min(10, n)]
+            relim_mine(warmup, 1)
+            relim_opt(warmup, 1)
+
+            for m in minsups
+                mc = max(1, Int(ceil(m * n)))
+                pct = round(m * 100, digits=2)
+                print("  minsup=$(pct)% ($(mc)/$(n)) ... ")
+
+                try
+                    (rb, tb, mb) = measure(() -> relim_mine(transactions, mc))
+                    (ro, to, mo) = measure(() -> relim_opt(transactions, mc))
+
+                    nb = length(rb); no = length(ro)
+                    println("Basic: $(round(tb,digits=4))s / $(mb)MB ($(nb) FI) | Opt: $(round(to,digits=4))s / $(mo)MB ($(no) FI)")
+                    println(f, "$(dname),$(pct),$(mc),$(n),$(nb),$(no),$(round(tb,digits=4)),$(mb),$(round(to,digits=4)),$(mo)")
+                catch e
+                    println("ERROR: ", e)
+                    println(f, "$(dname),$(pct),$(mc),$(n),ERROR,ERROR,ERROR,ERROR,ERROR,ERROR")
+                end
+            end
+        end
+    end
+    println("\n✅ Phần 1 hoàn tất → $(csv_path)")
+end
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHẦN 2: SCALABILITY — Retail subsets (10%, 25%, 50%, 75%, 100%)
+# Output: scalability_results.csv
+# ═════════════════════════════════════════════════════════════════════════════
+
+function run_scalability()
+    csv_path = joinpath(DATA_DIR, "scalability_results.csv")
+    println("\n" * "═"^70)
+    println("  PHẦN 2: SCALABILITY (Retail subsets)")
+    println("  Output: ", csv_path)
+    println("═"^70)
+
+    fpath = joinpath(BENCHMARK_DIR, "retail.txt")
+    if !isfile(fpath)
+        println("  ⚠ SKIP: Không tìm thấy retail.txt"); return
+    end
+
+    all_txs = read_spmf_file(fpath)
+    n_total = length(all_txs)
+    minsup_pct = 0.005  # cố định 0.5%
+
+    open(csv_path, "w") do f
+        println(f, "Subset_Pct,Num_Trans,Minsup_Count,Num_FI_Basic,Num_FI_Opt,Time_Basic_s,Mem_Basic_MB,Time_Opt_s,Mem_Opt_MB")
+
+        for pct in [0.10, 0.25, 0.50, 0.75, 1.00]
+            n_sub = Int(ceil(pct * n_total))
+            subset = all_txs[1:n_sub]
+            mc = max(1, Int(ceil(minsup_pct * n_sub)))
+
+            print("  $(Int(pct*100))% ($(n_sub) trans, minsup=$(mc)) ... ")
+            try
+                (rb, tb, mb) = measure(() -> relim_mine(subset, mc))
+                (ro, to, mo) = measure(() -> relim_opt(subset, mc))
+                nb = length(rb); no = length(ro)
+                println("Basic: $(round(tb,digits=4))s | Opt: $(round(to,digits=4))s")
+                println(f, "$(Int(pct*100)),$(n_sub),$(mc),$(nb),$(no),$(round(tb,digits=4)),$(mb),$(round(to,digits=4)),$(mo)")
+            catch e
+                println("ERROR: ", e)
+                println(f, "$(Int(pct*100)),$(n_sub),$(mc),ERROR,ERROR,ERROR,ERROR,ERROR,ERROR")
+            end
+        end
+    end
+    println("\n✅ Phần 2 hoàn tất → $(csv_path)")
+end
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHẦN 3: ẢNH HƯỞNG ĐỘ DÀI GIAO DỊCH (Synthetic data)
+# Output: txlen_results.csv
+# ═════════════════════════════════════════════════════════════════════════════
+
+function generate_synthetic(n_trans::Int, n_items::Int, avg_len::Int)
+    txs = Vector{Vector{Int}}(undef, n_trans)
+    for i in 1:n_trans
+        len = max(1, rand(max(1,avg_len-2):avg_len+2))
+        txs[i] = sort!(unique(rand(1:n_items, len)))
+    end
+    return txs
+end
+
+function run_txlen_experiment()
+    csv_path = joinpath(DATA_DIR, "txlen_results.csv")
+    println("\n" * "═"^70)
+    println("  PHẦN 3: ẢNH HƯỞNG ĐỘ DÀI GIAO DỊCH (Synthetic)")
+    println("  Output: ", csv_path)
+    println("═"^70)
+
+    n_trans = 10_000
+    n_items = 100
+    minsup_pct = 0.05  # 5%
+    avg_lens = [5, 10, 15, 20, 25, 30, 35]
+
+    open(csv_path, "w") do f
+        println(f, "Avg_TxLen,Num_Trans,Minsup_Count,Num_FI_Basic,Num_FI_Opt,Time_Basic_s,Mem_Basic_MB,Time_Opt_s,Mem_Opt_MB")
+
+        for avg_len in avg_lens
+            txs = generate_synthetic(n_trans, n_items, avg_len)
+            mc = max(1, Int(ceil(minsup_pct * n_trans)))
+
+            print("  avg_len=$(avg_len) (minsup=$(mc)) ... ")
+            try
+                (rb, tb, mb) = measure(() -> relim_mine(txs, mc))
+                (ro, to, mo) = measure(() -> relim_opt(txs, mc))
+                nb = length(rb); no = length(ro)
+                println("Basic: $(round(tb,digits=4))s ($(nb) FI) | Opt: $(round(to,digits=4))s ($(no) FI)")
+                println(f, "$(avg_len),$(n_trans),$(mc),$(nb),$(no),$(round(tb,digits=4)),$(mb),$(round(to,digits=4)),$(mo)")
+            catch e
+                println("ERROR: ", e)
+                println(f, "$(avg_len),$(n_trans),$(mc),ERROR,ERROR,ERROR,ERROR,ERROR,ERROR")
+            end
+        end
+    end
+    println("\n✅ Phần 3 hoàn tất → $(csv_path)")
+end
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═════════════════════════════════════════════════════════════════════════════
+
+function main()
+    println("╔══════════════════════════════════════════════════════════════╗")
+    println("║        RELIM BENCHMARK SUITE — Basic vs Optimized          ║")
+    println("╠══════════════════════════════════════════════════════════════╣")
+    println("║  Datasets: Chess, Mushroom, Retail, T10I4D100K, Accidents  ║")
+    println("║  Metrics : Correctness, Time, Memory, FI Count            ║")
+    println("╚══════════════════════════════════════════════════════════════╝")
+
+    run_correctness()      # (a) — Kiểm tra tính đúng đắn Basic vs Opt
+    run_main_benchmark()   # (b)(c)(d) — Thời gian + FI + Memory vs minsup
+    run_scalability()      # (e) — Scalability trên Retail
+    run_txlen_experiment() # (f) — Ảnh hưởng độ dài giao dịch
+
+    println("\n" * "═"^70)
+    println("  🎉 HOÀN TẤT TẤT CẢ BENCHMARK!")
+    println("  📄 correctness_results.csv → Bảng (a) — tỉ lệ khớp Basic vs Opt")
+    println("  📄 benchmark_results.csv   → Biểu đồ (b)(c)(d)")
+    println("  📄 scalability_results.csv → Biểu đồ (e)")
+    println("  📄 txlen_results.csv       → Biểu đồ (f)")
+    println("═"^70)
+end
+
 if abspath(PROGRAM_FILE) == @__FILE__
-    run_benchmark()
+    main()
 end
