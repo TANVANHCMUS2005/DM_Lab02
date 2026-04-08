@@ -146,6 +146,9 @@ function parse_commandline()
             help = "Ngưỡng độ hỗ trợ tối thiểu (Ví dụ: 0.5 là 50%, 2 là số lượng 2)"
             arg_type = Float64
             required = true
+        "--algo", "-a"
+            help = "Phiên bản thuật toán: 'basic' (mặc định) hoặc 'opt' (tối ưu)"
+            default = "basic"
     end
     
     return parse_args(s)
@@ -153,9 +156,20 @@ end
 
 function main_cli()
     parsed_args = parse_commandline()
-    input_file = parsed_args["input"]
+    input_file  = parsed_args["input"]
     output_file = parsed_args["output"]
-    minsup_val = parsed_args["minsup"]
+    minsup_val  = parsed_args["minsup"]
+    algo_choice = parsed_args["algo"]
+    
+    # Chọn hàm khai thác theo --algo
+    if algo_choice == "opt"
+        include(joinpath(@__DIR__, "relim_opt.jl"))
+        mine_fn = Main.AlgorithmOptV3.relim_optimized_mine
+        println(">>> Sử dụng phiên bản: Relim OPTIMIZED")
+    else
+        mine_fn = relim_mine
+        println(">>> Sử dụng phiên bản: Relim BASIC")
+    end
     
     println(">>> Đang nạp dataset: ", input_file)
     transactions = read_spmf_file(input_file)
@@ -167,12 +181,12 @@ function main_cli()
     
     println(">>> Bắt đầu chạy Đệ quy...")
     elapsed_time = @elapsed begin
-        itemsets = relim_mine(transactions, minsup_count)
+        itemsets = mine_fn(transactions, minsup_count)
     end
     
     sort!(itemsets, by = x -> length(x[1]))
     
-    println("Khai thác hoàn tất! Tìm thấy ", length(itemsets), " tập biến phổ biến.")
+    println("Khai thác hoàn tất! Tìm thấy ", length(itemsets), " tập phổ biến.")
     println("Thời gian chạy: ", round(elapsed_time, digits=4), " giây.")
     
     println(">>> Đang xuất file vào: ", output_file)
@@ -185,4 +199,5 @@ end # module Algorithm
 # Kích hoạt CLI nếu chạy trực tiếp file này từ terminal
 if abspath(PROGRAM_FILE) == @__FILE__
     Algorithm.main_cli()
+end
 end
