@@ -43,7 +43,10 @@ function relim_mine(transactions::Vector{Vector{Int}}, minsup::Int)
         rank_to_item[idx] = item
     end
     
-    processed_txs = Vector{Transaction}()
+    # === GIAI ĐOẠN 2: KHỞI TẠO MẢNG LISTS CHO CÂY THƯ MỤC ẢO (ROOT LEVEL) ===
+    N = length(valid_items)
+    lists = [ItemList(j) for j in 1:N]
+    
     for t in transactions
         filtered = Int[]
         for item in t
@@ -53,19 +56,15 @@ function relim_mine(transactions::Vector{Vector{Int}}, minsup::Int)
         end
         if !isempty(filtered)
             sort!(filtered)
-            push!(processed_txs, filtered)
-        end
-    end
-    
-    # === GIAI ĐOẠN 2: KHỞI TẠO MẢNG LISTS CHO CÂY THƯ MỤC ẢO (ROOT LEVEL) ===
-    N = length(valid_items)
-    lists = [ItemList(j) for j in 1:N]
-    
-    for t in processed_txs
-        head_rank = t[1]
-        lists[head_rank].support += 1
-        if length(t) > 1
-            push!(lists[head_rank].transactions, view(t, 2:length(t)))
+            
+            # Lấy item đầu tiên
+            head_rank = filtered[1]
+            lists[head_rank].support += 1
+            
+            # Tách phần còn lại vào TransPtr thay vì cắt mảng
+            if length(filtered) > 1
+                push!(lists[head_rank].transactions, TransPtr(filtered, 2))
+            end
         end
     end
     
@@ -99,22 +98,25 @@ function _relim_recursive!(lists::Vector{ItemList}, prefix::Vector{Int}, minsup:
             push!(frequent_itemsets, (new_prefix, support))
         end
         
-        for t in current_list.transactions
-            if !isempty(t)
-                head = t[1]
-                
-                # 1. Tái phân bổ vào mảng lists của Cấp Hiện Tại (BẮT BUỘC ĐỂ KHÔNG MẤT ITEM PHÍA SAU)
-                lists[head].support += 1
-                if length(t) > 1
-                    push!(lists[head].transactions, view(t, 2:length(t)))
-                end
-                
-                # 2. Sinh nhánh mới trên Cấp Thấp Hơn (Chỉ khi is_frequent == true)
-                if is_frequent
-                    var_next_lists[head].support += 1
-                    if length(t) > 1
-                        push!(var_next_lists[head].transactions, view(t, 2:length(t)))
-                    end
+        for t_ptr in current_list.transactions
+            # Do t_ptr chỉ chứa những giao dịch còn phần tử hợp lệ
+            head = t_ptr.items[t_ptr.idx]
+            
+            # Kiểm tra xem giao dịch này còn phần tử phía sau không
+            has_next = t_ptr.idx < length(t_ptr.items)
+            next_ptr = TransPtr(t_ptr.items, t_ptr.idx + 1)
+            
+            # 1. Tái phân bổ vào mảng lists của Cấp Hiện Tại (BẮT BUỘC ĐỂ KHÔNG MẤT ITEM PHÍA SAU)
+            lists[head].support += 1
+            if has_next
+                push!(lists[head].transactions, next_ptr)
+            end
+            
+            # 2. Sinh nhánh mới trên Cấp Thấp Hơn (Chỉ khi is_frequent == true)
+            if is_frequent
+                var_next_lists[head].support += 1
+                if has_next
+                    push!(var_next_lists[head].transactions, next_ptr)
                 end
             end
         end

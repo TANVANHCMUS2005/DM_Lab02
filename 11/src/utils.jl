@@ -36,8 +36,12 @@ Xuất kết quả Frequent Itemsets ra file theo định dạng SPMF:
 function write_spmf_file(filepath::String, itemsets::Vector{Tuple{Vector{Int}, Int}})
     open(filepath, "w") do file
         for (itemset, support) in itemsets
+            # Quan trọng: Các item trong 1 itemset PHẢI sắp xếp số học tăng dần 
+            # để đảm bảo chuỗi ký tự khớp 100% với Format của thư viện SPMF Java
+            sorted_items = sort(itemset)
+            
             # Nối các item bằng khoảng trắng
-            item_str = join(itemset, " ")
+            item_str = join(sorted_items, " ")
             # Ghi ra file kèm chuỗi #SUP:
             println(file, "$item_str #SUP: $support")
         end
