@@ -1,0 +1,6 @@
+Dataset,Minsup_Pct,Mem_Basic_MB,Mem_Opt_MB
+Chess,80.0,373.8,21.98
+Mushroom,30.0,194.64,106.69
+Retail,5.0,12.55,68.22
+Accidents,85.0,700.37,496.47
+T10I4D100K,6.0,4.42,23.65

@@ -1,0 +1,6 @@
+Subset_Pct,Num_Trans,Minsup_Count,Time_Basic_ms,Time_Opt_ms,Num_FI_Basic,Num_FI_Opt,Trend
+10,8817,177,7.38,10.78,63,63,Baseline
+25,22041,441,11.64,42.83,59,59,Sublinear
+50,44081,882,22.29,162.8,59,59,Linear
+75,66122,1323,32.49,173.13,54,54,Linear
+100,88162,1764,41.72,216.78,55,55,Linear
