@@ -200,4 +200,3 @@ end # module Algorithm
 if abspath(PROGRAM_FILE) == @__FILE__
     Algorithm.main_cli()
 end
-end
