@@ -1,7 +1,6 @@
-Dataset,Minsup_Pct,Minsup_Count,Num_Trans,Num_FI_Basic,Num_FI_Opt,Matched,Total_Union,Match_Rate_Pct,Only_Basic,Only_Opt
-Dataset,Minsup_Pct,Minsup_Count,Num_Trans,Num_FI_Basic,Num_FI_Opt,Matched,Total_Union,Match_Rate_Pct,Only_Basic,Only_Opt
-Chess,75.0,2397,3196,20993,20993,20993,20993,100.0,0,0
-Mushroom,15.0,1219,8124,98575,98575,98575,98575,100.0,0,0
-Retail,3.0,2645,88162,32,32,32,32,100.0,0,0
-Accidents,80.0,272147,340183,149,149,149,149,100.0,0,0
-T10I4D100K,3.0,3000,100000,60,60,60,60,100.0,0,0
+Dataset,Minsup_Pct,Num_FI_Basic,Num_FI_Opt,Matched,Match_Rate_Pct
+Chess,80.0,8227,8227,8227,100.0
+Mushroom,25.0,5545,5545,5545,100.0
+Retail,3.0,32,32,32,100.0
+Accidents,85.0,71,71,71,100.0
+T10I4D100K,3.0,60,60,60,100.0
