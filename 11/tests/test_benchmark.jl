@@ -27,7 +27,7 @@ DATASETS = [
     ("mushroom.txt", "Mushroom", [0.40, 0.35, 0.30, 0.25, 0.20, 0.15]), 
     ("retail.txt", "Retail", [0.10, 0.07, 0.05, 0.03, 0.02]),
     ("accidents.txt", "Accidents", [0.95, 0.90, 0.85, 0.80, 0.75, 0.70]), 
-    ("T10I4D100K.txt", "T10I4D100K", [0.10, 0.07, 0.06, 0.05, 0.4, 0.03]),
+    ("T10I4D100K.txt", "T10I4D100K", [0.10, 0.07, 0.06, 0.05, 0.04, 0.03]),
 ]
 
 const CORRECTNESS_MINSUP = Dict(
@@ -336,7 +336,7 @@ function run_txlen_experiment()
     open(csv_path, "w") do f
         println(f, "Avg_TxLen,Time_Basic_ms,Time_Opt_ms,Num_FI_Basic,Num_FI_Opt,Analysis")
         
-        for avg_len in [3, 4, 5, 6, 7, 8, 9, 10]
+        for avg_len in [5, 10, 15, 20, 25, 30]
             txs = generate_synthetic_sparse(n_trans, n_items, avg_len)
             mc = max(1, Int(ceil(minsup_pct * n_trans)))
             print("  avg_len=$(avg_len)... ")
