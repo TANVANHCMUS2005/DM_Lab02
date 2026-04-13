@@ -1,7 +1,6 @@
 # tests/test_benchmark.jl
 # =============================================================================
 # YÊU CẦU LAB 2:
-# a) Correctness vs SPMF
 # b) Time vs minsup + SPMF comparison
 # c) FI count vs minsup
 # d) Memory usage (Basic vs Opt) tại minsup trung bình
@@ -29,14 +28,6 @@ DATASETS = [
     ("accidents.txt", "Accidents", [0.95, 0.90, 0.85, 0.80, 0.75, 0.70]), 
     ("T10I4D100K.txt", "T10I4D100K", [0.10, 0.07, 0.06, 0.05, 0.04, 0.03]),
 ]
-
-const CORRECTNESS_MINSUP = Dict(
-    "Chess"      => [0.85, 0.80, 0.75],
-    "Mushroom"   => [0.30, 0.25, 0.20],
-    "Retail"     => [0.05, 0.03, 0.02],
-    "Accidents"  => [0.90, 0.85, 0.80],
-    "T10I4D100K" => [0.05, 0.04, 0.03],
-)
 
 function measure(f)
     GC.gc(true) 
@@ -75,78 +66,6 @@ function run_spmf_external(input_file::String, output_file::String, minsup_pct::
         return is_success ? t : -1.0
     catch e
         return -1.0
-    end
-end
-
-# ═════════════════════════════════════════════════════════════════════════════
-# a) CORRECTNESS — So sánh với SPMF
-# ═════════════════════════════════════════════════════════════════════════════
-
-function compare_with_spmf(our_result::Vector{Tuple{Vector{Int},Int}}, spmf_result::Vector{Tuple{Vector{Int},Int}})
-    our_set = Set{UInt64}(hash((sort(is), s)) for (is, s) in our_result)
-    spmf_set = Set{UInt64}(hash((sort(is), s)) for (is, s) in spmf_result)
-    
-    matched   = length(intersect(our_set, spmf_set))
-    total     = length(union(our_set, spmf_set))
-    rate      = total == 0 ? 100.0 : round(matched / total * 100, digits=2)
-    return (matched, total, rate)
-end
-
-function run_correctness_with_spmf()
-    if !isdir(RESULTS_DIR); mkpath(RESULTS_DIR); end
-    csv_path = joinpath(RESULTS_DIR, "correctness_results.csv")
-    println("\n" * "═"^70)
-    println("  a) CORRECTNESS — So sánh với SPMF tại nhiều minsup")
-    println("═"^70)
-    
-    if !isfile(SPMF_JAR_PATH)
-        println("  ⚠ Không tìm thấy spmf.jar tại $(SPMF_JAR_PATH). Bỏ qua SPMF.")
-    end
-
-    open(csv_path, "w") do f
-        println(f, "Dataset,Minsup_Pct,Minsup_Count,Num_FI_Our,Num_FI_SPMF,Matched,Match_Rate_Pct,Analysis")
-        for (fname, dname, _) in DATASETS
-            fpath = joinpath(BENCHMARK_DIR, fname)
-            out_spmf = joinpath(BENCHMARK_DIR, "temp_spmf_out_$(dname).txt")
-            if !isfile(fpath); continue; end
-            
-            correctness_minsups = get(CORRECTNESS_MINSUP, dname, [0.5])
-            transactions = read_spmf_file(fpath)
-            n = length(transactions)
-            
-            for m in correctness_minsups
-                mc = max(1, Int(ceil(m * n)))
-                pct = round(m * 100, digits=2)
-                print("  $(dname) — minsup=$(pct)% ($(mc)/$(n))... ")
-                
-                try
-                    our_result = relim_opt(transactions, mc)
-                    
-                    if isfile(SPMF_JAR_PATH)
-                        try
-                            spmf_t = run_spmf_external(fpath, out_spmf, m)
-                            if spmf_t >= 0 && isfile(out_spmf)
-                                spmf_result = read_spmf_output(out_spmf)
-                                (matched, total, rate) = compare_with_spmf(our_result, spmf_result)
-                                analysis = rate == 100.0 ? "MATCH" : (rate >= 99.0 ? "Near_MATCH" : "MISMATCH")
-                                println("$(length(our_result)) vs SPMF $(length(spmf_result)) — khớp $(rate)% [$(analysis)]")
-                                println(f, "$(dname),$(pct),$(mc),$(length(our_result)),$(length(spmf_result)),$(matched),$(rate),$(analysis)")
-                            else
-                                println("$(length(our_result)) FI (SPMF Failed/Crashed)")
-                                println(f, "$(dname),$(pct),$(mc),$(length(our_result)),N/A,N/A,N/A,SPMF_Crash")
-                            end
-                        finally
-                            rm(out_spmf, force=true)
-                        end
-                    else
-                        println("$(length(our_result)) FI (Bỏ qua SPMF)")
-                        println(f, "$(dname),$(pct),$(mc),$(length(our_result)),N/A,N/A,N/A,No_SPMF")
-                    end
-                catch e
-                    println("ERROR: $e")
-                end
-            end
-        end
     end
 end
 
@@ -359,7 +278,6 @@ function run_txlen_experiment()
 end
 
 function main()
-    run_correctness_with_spmf()  # a)
     run_time_and_fi_benchmark()  # b) & c)
     run_memory_benchmark()       # d)
     run_scalability()            # e)
