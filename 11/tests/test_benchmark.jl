@@ -19,7 +19,8 @@ const relim_opt = relim_optimized_mine
 
 const DATA_DIR      = joinpath(@__DIR__, "..", "data")
 const BENCHMARK_DIR = joinpath(DATA_DIR, "benchmark")
-const SPMF_JAR_PATH = joinpath(BENCHMARK_DIR, "spmf.jar")  
+const RESULTS_DIR   = joinpath(DATA_DIR, "results")
+const SPMF_JAR_PATH = joinpath(DATA_DIR, "tools", "spmf.jar")  
 
 DATASETS = [
     ("chess.txt", "Chess", [0.90, 0.85, 0.80, 0.75, 0.70, 0.65]), 
@@ -92,7 +93,8 @@ function compare_with_spmf(our_result::Vector{Tuple{Vector{Int},Int}}, spmf_resu
 end
 
 function run_correctness_with_spmf()
-    csv_path = joinpath(DATA_DIR, "correctness_results.csv")
+    if !isdir(RESULTS_DIR); mkpath(RESULTS_DIR); end
+    csv_path = joinpath(RESULTS_DIR, "correctness_results.csv")
     println("\n" * "═"^70)
     println("  a) CORRECTNESS — So sánh với SPMF tại nhiều minsup")
     println("═"^70)
@@ -153,7 +155,8 @@ end
 # ═════════════════════════════════════════════════════════════════════════════
 
 function run_time_and_fi_benchmark()
-    csv_path = joinpath(DATA_DIR, "time_fi_results.csv")
+    if !isdir(RESULTS_DIR); mkpath(RESULTS_DIR); end
+    csv_path = joinpath(RESULTS_DIR, "time_fi_results.csv")
     println("\n" * "═"^70)
     println("  b) TIME vs MINSUP & c) FI COUNT vs MINSUP")
     println("  (*Lưu ý: Thời gian SPMF bị cộng dồn ~0.15s overhead khởi động Java)")
@@ -208,7 +211,8 @@ end
 # ═════════════════════════════════════════════════════════════════════════════
 
 function run_memory_benchmark()
-    csv_path = joinpath(DATA_DIR, "memory_results.csv")
+    if !isdir(RESULTS_DIR); mkpath(RESULTS_DIR); end
+    csv_path = joinpath(RESULTS_DIR, "memory_results.csv")
     println("\n" * "═"^70)
     println("  d) MEMORY USAGE (Tại minsup trung bình - đo bằng Allocated Bytes)")
     println("═"^70)
@@ -244,7 +248,7 @@ end
 # ═════════════════════════════════════════════════════════════════════════════
 
 function run_scalability()
-    csv_path = joinpath(DATA_DIR, "scalability_results.csv")
+    csv_path = joinpath(RESULTS_DIR, "scalability_results.csv")
     println("\n" * "═"^70)
     println("  e) SCALABILITY — Retail subsets (10%, 25%, 50%, 75%, 100%)")
     println("═"^70)
@@ -318,7 +322,7 @@ function generate_synthetic_sparse(n_trans::Int, n_items::Int, avg_len::Int)
 end
 
 function run_txlen_experiment()
-    csv_path = joinpath(DATA_DIR, "txlen_results.csv")
+    csv_path = joinpath(RESULTS_DIR, "txlen_results.csv")
     println("\n" * "═"^70)
     println("  f) ẢNH HƯỞNG ĐỘ DÀI GIAO DỊCH")
     println("═"^70)
