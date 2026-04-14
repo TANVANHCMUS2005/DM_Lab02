@@ -1,6 +1,5 @@
 # tests/runtests.jl
 # =============================================================================
-# TV3 - Level 3: Test Suite Tự động
 # Chạy: julia --project tests/runtests.jl  (từ thư mục 11/)
 # =============================================================================
 
@@ -78,13 +77,14 @@ end
 
 @testset "Relim Correctness — 6 Datasets" begin
 
-    @testset "DS1: CSDL TV1 — demo.txt (minsup=2)" begin
+    @testset "DS1: CSDL TV1 — demo.txt (minsup=3)" begin
         path = joinpath(@__DIR__,"..","data","toy","demo.txt")
         @test isfile(path)
         txs = read_spmf_file(path)
-        @test length(txs) == 5
-        exp = [([1],4),([2],4),([3],4),([1,2],3),([1,3],3),([2,3],3),([1,2,3],2)]
-        test_both(txs, 2, exp)
+        @test length(txs) == 6
+        exp = [([1],4),([2],5),([3],5),([4],3),([5],3),
+               ([1,2],3),([1,3],3),([1,4],3),([2,3],4),([2,5],3)]
+        test_both(txs, 3, exp)
     end
 
     @testset "DS2: Tập thưa — cặp rời (minsup=2)" begin
@@ -163,4 +163,4 @@ end
     end
 end
 
-println("\n✅ Tất cả bài Test đã PASS!")
+println("\n Tất cả bài Test đã PASS!")

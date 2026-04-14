@@ -1,6 +1,5 @@
 # tests/test_benchmark.jl
 # =============================================================================
-# YÊU CẦU LAB 2:
 # b) Time vs minsup + SPMF comparison
 # c) FI count vs minsup
 # d) Memory usage (Basic vs Opt) tại minsup trung bình
@@ -282,7 +281,7 @@ function main()
     run_memory_benchmark()       # d)
     run_scalability()            # e)
     run_txlen_experiment()       # f)
-    println("\n🎉 HOÀN TẤT TẤT CẢ BENCHMARK CỦA LAB 2!")
+    println("\n HOÀN TẤT TẤT CẢ BENCHMARK CỦA LAB 2!")
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
